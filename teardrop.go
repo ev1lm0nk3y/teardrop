@@ -2,51 +2,59 @@ package main
 
 import (
 	"bytes"
-	"context"
+	"fmt"
 	"io"
 	"net/http"
 
 	"google.golang.org/api/drive/v3"
+
+	"github.com/subosito/twilio"
+
 	"gopkg.in/yaml.v2"
 )
 
-// TD defines the teardrop configuration yaml. This should be stored either on
+var (
+	hClient = &http.Client{}
+)
+
+// Config defines the teardrop configuration yaml. This should be stored either on
 // disk where this is run, or on Google Drive. Loading of this file is done via
 // command-line options.
-type TearDrop struct {
-	CheckDuration duration `yaml:"checkDuration"`
-	Twilio        Twilio   `yaml:"twilio"`
-	Items         []Item   `yaml:"files"`
-
-	gDriveClient *drive.Service
+type TDConfig struct {
+	Frequency   duration `yaml:"Frequency"`
+	ResponseTTL duration `yaml:"responseTTL"`
+	Twilio      Twilio   `yaml:"twilio"`
+	Items       []Item   `yaml:"files"`
 }
 
-func LoadTearDropConfig(tdConfig io.Reader) (*TD, error) {
-	td := &TD{}
+func Load(input io.Reader) (*TDConfig, error) {
+	var c TDConfig
 	var b []byte
-	tdBuf := bytes.NewBuffer(b)
-	if _, err := tdBuf.ReadFrom(tdConfig); err != nil {
+	cBuf := bytes.NewBuffer(b)
+	if _, err := cBuf.ReadFrom(input); err != nil {
 		return nil, err
 	}
-	if err := yaml.Unmarshal(tdBuf, td); err != nil {
+	if err := yaml.Unmarshal(cBuf.Bytes(), &c); err != nil {
 		return nil, err
 	}
-	return td, nil
+	return &c, nil
 }
 
-func (td *TD) Run() {
-	hc := &http.Client{}
-	var err error
-	if td.driveClient, err = drive.New(hc); err != nil {
+func (tc *TDConfig) Validate() error {
+	t := twilio.NewClient(tc.Twilio.SID, tc.Twilio.Token, nil)
+	if t.AccountSid != "active" {
+		return fmt.Errorf("Twilio account is disabled")
+	}
+	// check permissions on the items
+	dc, err := drive.New(hClient)
+	if err != nil {
 		return err
 	}
-
-	for {
-		time.Wait(td.CheckDuration.Wait)
-		td.Twilio.SendRequest(td.SMS)
+	fs := drive.NewFilesService(dc)
+	for _, i := range tc.Items {
+		if err := i.canIShare(fs); err != nil {
+			return err
+		}
 	}
-}
-
-func (td *TD) GetDriveService(hc *http.Client) error {
-	panic("NI")
+	return nil
 }

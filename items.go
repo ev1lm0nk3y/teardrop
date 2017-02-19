@@ -22,7 +22,7 @@ type recipient struct {
 }
 
 func (r *recipient) UnmarshalYAML(b []byte) error {
-	if _, err := mail.ParseAddress(addr); err != nil {
+	if _, err := mail.ParseAddress(string(b)); err != nil {
 		return fmt.Errorf("email address invalid: %s", string(b))
 	}
 	r.Address = string(b)
@@ -45,18 +45,19 @@ func (d *duration) UnmarshalYAML(b []byte) error {
 	if ptw == 0 {
 		return fmt.Errorf("unable to parse duration: %s", m[1])
 	}
+	dp := time.Duration(ptw)
 
 	switch m[2] {
 	case "s":
-		d.Wait = ptw * time.Second
+		d.Wait = time.Second * dp
 	case "m":
-		d.Wait = ptw * time.Minute
+		d.Wait = time.Minute * dp
 	case "h":
-		d.Wait = ptw * time.Hour
+		d.Wait = time.Hour * dp
 	case "d":
-		d.Wait = ptw * day
+		d.Wait = day * dp
 	case "w":
-		d.Wait = ptw * week
+		d.Wait = week * dp
 	default:
 		return fmt.Errorf("bad time modifier: %s", m[2])
 	}
@@ -68,7 +69,7 @@ func parseDurationInt64(w string) int64 {
 	if len(w) == 0 {
 		return 0
 	}
-	parsed, err := strconv.Atoi(value[:len(w)-1])
+	parsed, err := strconv.Atoi(w[:len(w)-1])
 	if err != nil {
 		return 0
 	}
@@ -91,16 +92,27 @@ type Item struct {
 // Release will update the permission of the Item to reader for the recipient
 // after the given delay.
 func (i *Item) Release(service *drive.Service) *time.Timer {
-	dps := service.NewPermissionsService()
-	return time.AfterFunc(i.SendDelay.Wait, i.updatePermission(dps))
+	dps := drive.NewPermissionsService(service)
+	return time.AfterFunc(i.SendDelay.Wait, func() { i.updatePermission(dps) })
 }
 
-func (i *Item) updatePermission(dps *drive.PermissionService) error {
+func (i *Item) canIShare(dps *drive.FilesService) error {
+	gf, err := dps.Get(i.Id).Do()
+	if err != nil {
+		return err
+	}
+	if gf.Permissions == nil {
+		return fmt.Errorf("No access to share %s\n", gf.Name)
+	}
+	return nil
+}
+
+func (i *Item) updatePermission(dps *drive.PermissionsService) error {
 	itemPerm := &drive.Permission{}
 	for _, recvAddr := range i.SendTo {
-		p, err := dps.Update(i.Id, defaultPermissionLevel, itemPerm).Do()
+		_, err := dps.Update(i.Id, defaultPermissionLevel, itemPerm).Do()
 		if err != nil {
-			if googleapis.IsNotModified(err) {
+			if googleapi.IsNotModified(err) {
 				fmt.Printf("%s is already allowed to view the document\n", recvAddr)
 				break
 			}

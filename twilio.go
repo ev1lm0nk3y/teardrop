@@ -36,7 +36,7 @@ type uri struct {
 }
 
 func (u *uri) UnmarshalYAML(b []byte) error {
-	if b[0] != byte("/") {
+	if string(b[0]) != "/" {
 		return fmt.Errorf("uri does not begin with a '/'")
 	}
 	return nil
@@ -59,56 +59,54 @@ type Twilio struct {
 }
 
 type TwilioSend struct {
-	Twilio
 	MsgDeliveredChan chan bool
+	MsgSid           string
 
-	lastMsgSid     string
 	numUndelivered int
 }
 
 // Send an SMS message to your configured device. Return *TwilioSend to track
 // message delivery.
-func (t *Twilio) Send(msg string, done <-chan bool) (*TwilioSend,
-	error) {
-	ts := copy(*t)
-	tc := twilio.NewClient(t.SID, t.Token, nil)
+func (t *Twilio) Send(msg string) (*TwilioSend, error) {
+	tClient := twilio.NewClient(t.SID, t.Token, nil)
 	msgParams := twilio.MessageParams{
 		Body:           msg,
-		StatusCallback: fmt.Sprintf("http://%s:%d%s", hostname, scPort, t.CallbackURI),
+		StatusCallback: fmt.Sprintf("http://%s:%d%s", "127.0.0.1", 9823, t.CallbackURI),
 	}
-	ms, res, err := twilio.Send(t.From, t.To, msgParams)
+	ms, res, err := tClient.Messages.Send(t.From, t.To, msgParams)
 	if err != nil {
-		return checkForErr(res.Body, res.StatusCode)
+		return nil, checkForErr(res.Body, res.StatusCode)
 	}
 
-	ts.msgDeliveredChan <- false
-	ts.lastMsgSid = ms.Sid
-	ts.numUndelivered = 0
-	return nil
+	ts := &TwilioSend{
+		MsgSid: ms.Sid,
+	}
+	ts.MsgDeliveredChan <- false
+	return ts, nil
 }
 
-type Send struct {
+type SendMsg struct {
 	Sid       string
 	Failed    bool
 	Delivered bool
 }
 
-var sChan = make(Send, 10)
+var sChan = make(chan SendMsg, 10)
 
 // SentMessageStatus is a REST endpoint for Twilio.CallbackURI for a specific
 // message. Will set the channel to true if the message has been delivered.
 func SentMessageStatus(req *http.Request, res *http.Response) {
 	res.StatusCode = 200
-	msg, err := parseTwilioMessage(req.Body, nil)
+	msg, err := parseTwilioMessage(req.Body, 0)
 	if err != nil {
 		res.StatusCode = 500
 		return
 	}
-	s := Send{Sid: msg.Sid}
+	s := SendMsg{Sid: msg.Sid}
 	switch msg.Status {
 	case "delivered":
 		s.Delivered = true
-	case "failed" | "undelivered":
+	case "failed", "undelivered":
 		s.Failed = true
 	}
 	sChan <- s
@@ -120,14 +118,14 @@ type Receive struct {
 	Code   string
 }
 
-var rChan = make(Receive, 10)
+var rChan = make(chan Receive, 10)
 
 // ReceiveSMS is a REST endpoint where Twilio will send messages that it
 // receives on their configured numbers. It send the response, if it is
 // properly formed, onto a channel to be processed elsewhere.
 func ReceiveSMS(req *http.Request, res *http.Response) {
 	res.StatusCode = 200
-	msg, err := parseTwilioMessage(req.Body, nil)
+	msg, err := parseTwilioMessage(req.Body, 0)
 	if err != nil {
 		res.StatusCode = 500
 		return
@@ -140,19 +138,22 @@ func ReceiveSMS(req *http.Request, res *http.Response) {
 
 func parseTwilioMessage(r io.ReadCloser, hs int) (*twilioErrMsg, error) {
 	var b []byte
-	msg := &twilioErrMsg{}
+	var msg twilioErrMsg
 	rBuf := bytes.NewBuffer(b)
-	if _, err := r.Read(rBuf); err != nil {
+	if _, err := rBuf.ReadFrom(r); err != nil {
 		return nil, err
 	}
-	if err = json.Unmarshal(rBuf, &msg); err != nil {
+	if err := json.Unmarshal(rBuf.Bytes(), &msg); err != nil {
 		return nil, err
 	}
-	return msg, err
+	return &msg, nil
 }
 
-func checkForErr(b io.ReadCloser, err error) error {
-	msg, err := parseTwilioMessage(b, nil)
+func checkForErr(b io.ReadCloser, statusCode int) error {
+	if statusCode >= 300 {
+		return fmt.Errorf("non-200 status code")
+	}
+	msg, err := parseTwilioMessage(b, statusCode)
 	if err != nil {
 		return err
 	}
