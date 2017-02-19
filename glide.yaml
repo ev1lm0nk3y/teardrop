@@ -1,0 +1,7 @@
+package: github.com/ev1lm0nk3y/teardrop
+import:
+- package: google.golang.org/api
+  subpackages:
+  - drive/v3
+  - googleapi
+- package: gopkg.in/yaml.v2

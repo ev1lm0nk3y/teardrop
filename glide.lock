@@ -1,0 +1,20 @@
+hash: c0d7912e4c33f7638cb199374d0449d7b628e71e6d6531baf6b1d8baebf6cb1d
+updated: 2017-02-19T04:42:04.146598617-08:00
+imports:
+- name: github.com/subosito/twilio
+  version: ef2f13504366093ed052627008181166612c646d
+- name: golang.org/x/net
+  version: 6b27048ae5e6ad1ef927e72e437531493de612fe
+  subpackages:
+  - context
+  - context/ctxhttp
+- name: google.golang.org/api
+  version: bc20c61134e1d25265dd60049f5735381e79b631
+  subpackages:
+  - drive/v3
+  - googleapi
+  - gensupport
+  - googleapi/internal/uritemplates
+- name: gopkg.in/yaml.v2
+  version: a3f3340b5840cee44f372bddb5880fcbc419b46a
+devImports: []
